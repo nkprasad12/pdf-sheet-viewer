@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Piano Sheet Reader Pro</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- PDF.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <style>
+        body {
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        /* Dark Theme Default */
+        .theme-dark {
+            --bg-main: #121212;
+            --bg-card: #1e1e1e;
+            --bg-nav: rgba(24, 24, 27, 0.85);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: #374151;
+            --canvas-bg: #1e1e1e;
+            --page-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Light Theme */
+        .theme-light {
+            --bg-main: #f3f4f6;
+            --bg-card: #ffffff;
+            --bg-nav: rgba(255, 255, 255, 0.9);
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --border-color: #e5e7eb;
+            --canvas-bg: #ffffff;
+            --page-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Sepia Theme for Eye Comfort */
+        .theme-sepia {
+            --bg-main: #f4ecd8;
+            --bg-card: #e8dfc8;
+            --bg-nav: rgba(232, 223, 200, 0.92);
+            --text-main: #433422;
+            --text-muted: #78644e;
+            --border-color: #d3c4a5;
+            --canvas-bg: #fbf0d9;
+            --page-shadow: 0 10px 25px -5px rgba(67, 52, 34, 0.15);
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .bg-card { background-color: var(--bg-card); }
+        .bg-nav { background-color: var(--bg-nav); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .border-custom { border-color: var(--border-color); }
+        .text-custom-muted { color: var(--text-muted); }
+
+        #pdf-canvas-container {
+            box-shadow: var(--page-shadow);
+            background-color: var(--canvas-bg);
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Hide scrollbars for clean full-screen presentation */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Stand mode toolbar auto-hide animation */
+        .toolbar-transition {
+            transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+        }
+
+        .toolbar-hidden {
+            transform: translateY(-100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .controls-hidden {
+            transform: translateY(100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="theme-dark min-h-screen flex flex-col justify-between overflow-hidden select-none">
+
+    <header id="top-bar" class="toolbar-transition fixed top-0 left-0 right-0 z-30 bg-nav border-b border-custom px-4 py-3 flex items-center justify-between shadow-md">
+        <div class="flex items-center space-x-3">
+            <button id="open-library-btn" class="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-sm font-medium transition active:scale-95 shadow-sm">
+                <i class="fa-solid fa-folder-open"></i>
+                <span class="hidden sm:inline">Library</span>
+            </button>
+            <span id="current-title" class="font-semibold text-base sm:text-lg truncate max-w-[180px] sm:max-w-md">No Score Loaded</span>
+        </div>
+
+        <!-- Wake Lock Status Indicator & Controls -->
+        <div class="flex items-center space-x-2 sm:space-x-3">
+            <button id="wakelock-toggle" class="flex items-center space-x-2 px-3 py-1.5 rounded-full border border-custom bg-card text-xs font-medium transition active:scale-95">
+                <span id="wakelock-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
+                <span id="wakelock-text" class="hidden sm:inline">Wake Lock Off</span>
+            </button>
+
+            <!-- Theme Toggle -->
+            <button id="theme-btn" class="p-2.5 rounded-xl border border-custom bg-card hover:bg-gray-800 text-sm transition active:scale-95" title="Switch Theme">
+                <i class="fa-solid fa-moon" id="theme-icon"></i>
+            </button>
+
+            <!-- Fullscreen Toggle -->
+            <button id="fullscreen-btn" class="p-2.5 rounded-xl border border-custom bg-card hover:bg-gray-800 text-sm transition active:scale-95" title="Toggle Fullscreen">
+                <i class="fa-solid fa-expand" id="fullscreen-icon"></i>
+            </button>
+        </div>
+    </header>
+
+    <main id="main-view" class="relative flex-1 flex items-center justify-center pt-16 pb-20 px-2 sm:px-4 overflow-hidden h-screen">
+        
+        <!-- Welcome / Empty State Drag and Drop Area -->
+        <div id="drop-zone" class="flex flex-col items-center justify-center p-8 border-2 border-dashed border-indigo-500/50 rounded-2xl bg-card text-center max-w-lg w-full cursor-pointer hover:border-indigo-500 transition-all">
+            <div class="w-16 h-16 bg-indigo-500/10 text-indigo-500 rounded-full flex items-center justify-center text-2xl mb-4">
+                <i class="fa-solid fa-file-pdf"></i>
+            </div>
+            <h2 class="text-xl font-bold mb-2">Load Piano Sheet Music</h2>
+            <p class="text-xs sm:text-sm text-custom-muted mb-6">Drag and drop a PDF file here or browse from your device storage</p>
+            <label class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 py-2.5 rounded-xl cursor-pointer transition active:scale-95 shadow-md">
+                Select PDF File
+                <input type="file" id="file-input" accept="application/pdf" class="hidden">
+            </label>
+        </div>
+
+        <!-- Rendered Sheet Canvas -->
+        <div id="canvas-wrapper" class="relative max-w-full max-h-full flex items-center justify-center hidden">
+            <canvas id="pdf-canvas" class="rounded-lg shadow-2xl transition-all duration-200"></canvas>
+            
+            <!-- Tap Navigation Zones for Easy Screen Tapping on Music Stand -->
+            <div id="left-tap-zone" class="absolute left-0 top-0 w-1/3 h-full cursor-pointer z-10 opacity-0 hover:bg-black/5 transition-opacity" title="Previous Page"></div>
+            <div id="right-tap-zone" class="absolute right-0 top-0 w-1/3 h-full cursor-pointer z-10 opacity-0 hover:bg-black/5 transition-opacity" title="Next Page"></div>
+        </div>
+
+        <!-- Floating Quick Notice -->
+        <div id="toast" class="fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-900/90 text-white px-4 py-2 rounded-full text-xs sm:text-sm font-medium backdrop-blur shadow-lg transition-opacity duration-300 opacity-0 pointer-events-none z-50">
+            Toast message
+        </div>
+    </main>
+
+    <footer id="bottom-bar" class="toolbar-transition fixed bottom-0 left-0 right-0 z-30 bg-nav border-t border-custom px-4 py-3 flex items-center justify-between shadow-lg">
+        <div class="flex items-center space-x-2 sm:space-x-4">
+            <button id="prev-page-btn" class="p-3 rounded-xl border border-custom bg-card disabled:opacity-30 disabled:pointer-events-none transition active:scale-95" disabled>
+                <i class="fa-solid fa-chevron-left text-base"></i>
+            </button>
+            <button id="next-page-btn" class="p-3 rounded-xl border border-custom bg-card disabled:opacity-30 disabled:pointer-events-none transition active:scale-95" disabled>
+                <i class="fa-solid fa-chevron-right text-base"></i>
+            </button>
+            <span id="page-info" class="text-xs sm:text-sm font-medium px-2">Page 0 / 0</span>
+        </div>
+
+        <!-- Zoom & View controls -->
+        <div class="flex items-center space-x-2 sm:space-x-3">
+            <button id="zoom-out-btn" class="p-2.5 rounded-xl border border-custom bg-card text-xs transition active:scale-95" title="Zoom Out">
+                <i class="fa-solid fa-minus"></i>
+            </button>
+            <span id="zoom-level" class="text-xs font-mono w-12 text-center">100%</span>
+            <button id="zoom-in-btn" class="p-2.5 rounded-xl border border-custom bg-card text-xs transition active:scale-95" title="Zoom In">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+            <button id="zoom-reset-btn" class="px-2.5 py-1.5 rounded-xl border border-custom bg-card text-xs font-medium transition active:scale-95 hidden sm:inline">
+                Fit Width
+            </button>
+        </div>
+    </footer>
+
+    <div id="library-modal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 transition-opacity opacity-0 pointer-events-none">
+        <div class="bg-card w-full max-w-lg rounded-2xl border border-custom shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div class="p-4 border-b border-custom flex items-center justify-between">
+                <h3 class="font-bold text-lg flex items-center space-x-2">
+                    <i class="fa-solid fa-book-open text-indigo-500"></i>
+                    <span>Saved Score Library</span>
+                </h3>
+                <button id="close-library-btn" class="text-custom-muted hover:text-white p-2 rounded-lg">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div id="library-list" class="p-4 overflow-y-auto flex-1 divide-y divide-custom no-scrollbar">
+                <!-- Scores injected dynamically -->
+            </div>
+            <div class="p-3 bg-nav border-t border-custom text-center text-xs text-custom-muted">
+                Scores saved locally using IndexedDB browser storage.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const APP_STATE = {
+            pdfDoc: null,
+            currentPage: 1,
+            totalPages: 0,
+            scale: 1.0,
+            autoFit: true,
+            wakeLock: null,
+            wakeLockActive: false,
+            currentFileName: '',
+            theme: 'dark', // dark, light, sepia
+            db: null,
+            toolbarVisible: true
+        };
+
+        // Initialize IndexedDB
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('SheetReaderDB', 1);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('scores')) {
+                        db.createObjectStore('scores', { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = (e) => {
+                    APP_STATE.db = e.target.result;
+                    resolve(APP_STATE.db);
+                };
+                request.onerror = (e) => reject(e);
+            });
+        }
+
+        async function saveScoreToDB(name, dataBuffer) {
+            if (!APP_STATE.db) return;
+            const transaction = APP_STATE.db.transaction(['scores'], 'readwrite');
+            const store = transaction.objectStore('scores');
+            const scoreObj = {
+                id: name,
+                name: name,
+                data: dataBuffer,
+                updatedAt: new Date().getTime()
+            };
+            store.put(scoreObj);
+        }
+
+        async function getAllScoresFromDB() {
+            if (!APP_STATE.db) return [];
+            return new Promise((resolve) => {
+                const transaction = APP_STATE.db.transaction(['scores'], 'readonly');
+                const store = transaction.objectStore('scores');
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => resolve([]);
+            });
+        }
+
+        async function deleteScoreFromDB(id) {
+            if (!APP_STATE.db) return;
+            const transaction = APP_STATE.db.transaction(['scores'], 'readwrite');
+            const store = transaction.objectStore('scores');
+            store.delete(id);
+        }
+
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    APP_STATE.wakeLock = await navigator.wakeLock.request('screen');
+                    APP_STATE.wakeLockActive = true;
+                    updateWakeLockUI();
+                    showToast("Screen Wake Lock Active (Screen won't sleep)");
+
+                    APP_STATE.wakeLock.addEventListener('release', () => {
+                        APP_STATE.wakeLockActive = false;
+                        updateWakeLockUI();
+                    });
+                } catch (err) {
+                    console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+                    showToast("Failed to lock screen wake state");
+                }
+            } else {
+                showToast("Wake Lock API not supported in this browser");
+            }
+        }
+
+        async function releaseWakeLock() {
+            if (APP_STATE.wakeLock) {
+                await APP_STATE.wakeLock.release();
+                APP_STATE.wakeLock = null;
+                APP_STATE.wakeLockActive = false;
+                updateWakeLockUI();
+                showToast("Wake Lock Released");
+            }
+        }
+
+        function toggleWakeLock() {
+            if (APP_STATE.wakeLockActive) {
+                releaseWakeLock();
+            } else {
+                requestWakeLock();
+            }
+        }
+
+        function updateWakeLockUI() {
+            const dot = document.getElementById('wakelock-dot');
+            const text = document.getElementById('wakelock-text');
+            const btn = document.getElementById('wakelock-toggle');
+
+            if (APP_STATE.wakeLockActive) {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50';
+                text.textContent = 'Screen On';
+                btn.classList.add('border-emerald-500/50', 'bg-emerald-500/10');
+            } else {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+                text.textContent = 'Screen Sleep Allowed';
+                btn.classList.remove('border-emerald-500/50', 'bg-emerald-500/10');
+            }
+        }
+
+        // Re-aquire wake lock when returning to app tab
+        document.addEventListener('visibilitychange', async () => {
+            if (APP_STATE.wakeLockActive && document.visibilityState === 'visible') {
+                await requestWakeLock();
+            }
+        });
+
+        async function loadPdfBuffer(buffer, fileName) {
+            try {
+                showToast("Loading PDF score...");
+                const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+                APP_STATE.pdfDoc = pdf;
+                APP_STATE.totalPages = pdf.numPages;
+                APP_STATE.currentPage = 1;
+                APP_STATE.currentFileName = fileName || 'Untitled Score';
+
+                document.getElementById('current-title').textContent = APP_STATE.currentFileName;
+                document.getElementById('drop-zone').classList.add('hidden');
+                document.getElementById('canvas-wrapper').classList.remove('hidden');
+
+                // Auto activate Wake Lock on opening sheet music
+                if (!APP_STATE.wakeLockActive) {
+                    requestWakeLock();
+                }
+
+                await renderPage(APP_STATE.currentPage);
+                saveScoreToDB(APP_STATE.currentFileName, buffer);
+            } catch (err) {
+                console.error('Error loading PDF:', err);
+                showToast("Error opening PDF file");
+            }
+        }
+
+        async function renderPage(pageNum) {
+            if (!APP_STATE.pdfDoc) return;
+
+            const page = await APP_STATE.pdfDoc.getPage(pageNum);
+            const canvas = document.getElementById('pdf-canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Calculate auto-fit scale based on viewport width & height
+            const mainContainer = document.getElementById('main-view');
+            const availWidth = mainContainer.clientWidth - 32;
+            const availHeight = mainContainer.clientHeight - 32;
+
+            const viewportUnscaled = page.getViewport({ scale: 1.0 });
+            
+            if (APP_STATE.autoFit) {
+                const scaleX = availWidth / viewportUnscaled.width;
+                const scaleY = availHeight / viewportUnscaled.height;
+                APP_STATE.scale = Math.min(scaleX, scaleY);
+            }
+
+            const viewport = page.getViewport({ scale: APP_STATE.scale });
+            
+            // High DPI screen adjustments (e.g. iPad Retina Display)
+            const outputScale = window.devicePixelRatio || 1;
+
+            canvas.width = Math.floor(viewport.width * outputScale);
+            canvas.height = Math.floor(viewport.height * outputScale);
+            canvas.style.width = Math.floor(viewport.width) + "px";
+            canvas.style.height = Math.floor(viewport.height) + "px";
+
+            const transform = outputScale !== 1 
+                ? [outputScale, 0, 0, outputScale, 0, 0] 
+                : null;
+
+            const renderContext = {
+                canvasContext: ctx,
+                transform: transform,
+                viewport: viewport
+            };
+
+            await page.render(renderContext).promise;
+
+            // Update Page Controls UI
+            document.getElementById('page-info').textContent = `Page ${pageNum} / ${APP_STATE.totalPages}`;
+            document.getElementById('prev-page-btn').disabled = pageNum <= 1;
+            document.getElementById('next-page-btn').disabled = pageNum >= APP_STATE.totalPages;
+            document.getElementById('zoom-level').textContent = `${Math.round(APP_STATE.scale * 100)}%`;
+        }
+
+        function nextPage() {
+            if (APP_STATE.pdfDoc && APP_STATE.currentPage < APP_STATE.totalPages) {
+                APP_STATE.currentPage++;
+                renderPage(APP_STATE.currentPage);
+            }
+        }
+
+        function prevPage() {
+            if (APP_STATE.pdfDoc && APP_STATE.currentPage > 1) {
+                APP_STATE.currentPage--;
+                renderPage(APP_STATE.currentPage);
+            }
+        }
+
+        function zoomIn() {
+            APP_STATE.autoFit = false;
+            APP_STATE.scale = Math.min(3.0, APP_STATE.scale * 1.25);
+            renderPage(APP_STATE.currentPage);
+        }
+
+        function zoomOut() {
+            APP_STATE.autoFit = false;
+            APP_STATE.scale = Math.max(0.4, APP_STATE.scale / 1.25);
+            renderPage(APP_STATE.currentPage);
+        }
+
+        function resetZoom() {
+            APP_STATE.autoFit = true;
+            renderPage(APP_STATE.currentPage);
+        }
+
+        function toggleStandMode() {
+            APP_STATE.toolbarVisible = !APP_STATE.toolbarVisible;
+            const topBar = document.getElementById('top-bar');
+            const bottomBar = document.getElementById('bottom-bar');
+
+            if (APP_STATE.toolbarVisible) {
+                topBar.classList.remove('toolbar-hidden');
+                bottomBar.classList.remove('controls-hidden');
+            } else {
+                topBar.classList.add('toolbar-hidden');
+                bottomBar.classList.add('controls-hidden');
+                showToast("Double-tap or tap top to show controls");
+            }
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    showToast(`Fullscreen Error: ${err.message}`);
+                });
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        }
+
+        function cycleTheme() {
+            const body = document.body;
+            const icon = document.getElementById('theme-icon');
+
+            if (APP_STATE.theme === 'dark') {
+                APP_STATE.theme = 'light';
+                body.className = 'theme-light min-h-screen flex flex-col justify-between overflow-hidden select-none';
+                icon.className = 'fa-solid fa-sun';
+            } else if (APP_STATE.theme === 'light') {
+                APP_STATE.theme = 'sepia';
+                body.className = 'theme-sepia min-h-screen flex flex-col justify-between overflow-hidden select-none';
+                icon.className = 'fa-solid fa-note-sticky';
+            } else {
+                APP_STATE.theme = 'dark';
+                body.className = 'theme-dark min-h-screen flex flex-col justify-between overflow-hidden select-none';
+                icon.className = 'fa-solid fa-moon';
+            }
+        }
+
+        async function openLibrary() {
+            const modal = document.getElementById('library-modal');
+            const list = document.getElementById('library-list');
+            list.innerHTML = '';
+
+            const scores = await getAllScoresFromDB();
+
+            if (scores.length === 0) {
+                list.innerHTML = `<div class="text-center py-8 text-custom-muted text-sm">No saved scores in library yet.</div>`;
+            } else {
+                scores.forEach(score => {
+                    const item = document.createElement('div');
+                    item.className = 'py-3 flex items-center justify-between group';
+                    item.innerHTML = `
+                        <div class="flex items-center space-x-3 cursor-pointer flex-1 mr-2 truncate score-select">
+                            <i class="fa-solid fa-music text-indigo-500"></i>
+                            <span class="font-medium text-sm truncate">${score.name}</span>
+                        </div>
+                        <button class="delete-btn text-custom-muted hover:text-rose-500 p-2 transition opacity-80 sm:opacity-0 group-hover:opacity-100" title="Delete Score">
+                            <i class="fa-solid fa-trash text-xs"></i>
+                        </button>
+                    `;
+
+                    item.querySelector('.score-select').addEventListener('click', () => {
+                        loadPdfBuffer(score.data, score.name);
+                        closeLibrary();
+                    });
+
+                    item.querySelector('.delete-btn').addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        await deleteScoreFromDB(score.id);
+                        openLibrary(); // Refresh list
+                    });
+
+                    list.appendChild(item);
+                });
+            }
+
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+        }
+
+        function closeLibrary() {
+            document.getElementById('library-modal').classList.add('opacity-0', 'pointer-events-none');
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => {
+                toast.classList.add('opacity-0');
+            }, 2500);
+        }
+
+        function setupEventListeners() {
+            // File input loader
+            const fileInput = document.getElementById('file-input');
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(evt) {
+                        loadPdfBuffer(evt.target.result, file.name);
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
+            });
+
+            // Drag and Drop
+            const dropZone = document.getElementById('drop-zone');
+            dropZone.addEventListener('dragover', (e) => e.preventDefault());
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (file && file.type === 'application/pdf') {
+                    const reader = new FileReader();
+                    reader.onload = function(evt) {
+                        loadPdfBuffer(evt.target.result, file.name);
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
+            });
+
+            // Tap Zones for Hands-Free/Fast Tap Navigation
+            document.getElementById('left-tap-zone').addEventListener('click', prevPage);
+            document.getElementById('right-tap-zone').addEventListener('click', nextPage);
+
+            // Button Click Listeners
+            document.getElementById('prev-page-btn').addEventListener('click', prevPage);
+            document.getElementById('next-page-btn').addEventListener('click', nextPage);
+            document.getElementById('zoom-in-btn').addEventListener('click', zoomIn);
+            document.getElementById('zoom-out-btn').addEventListener('click', zoomOut);
+            document.getElementById('zoom-reset-btn').addEventListener('click', resetZoom);
+            document.getElementById('wakelock-toggle').addEventListener('click', toggleWakeLock);
+            document.getElementById('theme-btn').addEventListener('click', cycleTheme);
+            document.getElementById('fullscreen-btn').addEventListener('click', toggleFullscreen);
+            document.getElementById('open-library-btn').addEventListener('click', openLibrary);
+            document.getElementById('close-library-btn').addEventListener('click', closeLibrary);
+
+            // Double Tap Canvas area to hide UI controls for pure stand mode
+            let lastTap = 0;
+            document.getElementById('main-view').addEventListener('click', (e) => {
+                const now = new Date().getTime();
+                const timespan = now - lastTap;
+                if (timespan < 300 && timespan > 0) {
+                    toggleStandMode();
+                }
+                lastTap = now;
+            });
+
+            // Keyboard Shortcuts for Pedal / BT Page Turners
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+                    nextPage();
+                } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                    prevPage();
+                } else if (e.key === 'f' || e.key === 'F') {
+                    toggleFullscreen();
+                }
+            });
+
+            // Swipe gestures for touch screens
+            let touchStartX = 0;
+            let touchEndX = 0;
+            document.addEventListener('touchstart', (e) => {
+                touchStartX = e.changedTouches[0].screenX;
+            }, { passive: true });
+
+            document.addEventListener('touchend', (e) => {
+                touchEndX = e.changedTouches[0].screenX;
+                handleSwipe();
+            }, { passive: true });
+
+            function handleSwipe() {
+                const diff = touchEndX - touchStartX;
+                if (Math.abs(diff) > 50) {
+                    if (diff < 0) nextPage();
+                    else prevPage();
+                }
+            }
+
+            // Screen Resize handler
+            window.addEventListener('resize', () => {
+                if (APP_STATE.pdfDoc) {
+                    renderPage(APP_STATE.currentPage);
+                }
+            });
+        }
+
+        // Initialization
+        window.onload = async () => {
+            await initDB();
+            setupEventListeners();
+            updateWakeLockUI();
+        };
+    </script>
+</body>
+</html>
